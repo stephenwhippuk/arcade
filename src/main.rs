@@ -1,4 +1,5 @@
 mod input;
+mod maze;
 mod screens;
 mod state;
 mod time;

@@ -37,8 +37,9 @@ forced into one universal representation.
 
 ### 4.1 Keep game rules game-specific
 
-Pac-Man and Space Invaders are useful candidate games, but neither is selected
-as the first implementation. They exercise different needs:
+Pac-Man and Space Invaders are useful reference genres. The first implementation
+is an original maze-chase game; a projectile-based game remains a possible
+second implementation. They exercise different needs:
 
 - Pac-Man suggests tile maps, grid-constrained movement, maze collision, and
   enemy navigation.
@@ -156,8 +157,7 @@ to the settings interface.
 
 ## 7. Decisions intentionally left open
 
-- Which game to implement first. Pac-Man and Space Invaders are both candidates;
-  neither is a requirement.
+- Which game to implement second to validate engine reuse beyond maze gameplay.
 - Whether Macroquad remains suitable after the first game is implemented.
 - Whether a game needs a tile-map helper or other reusable world utilities.
 - Whether later games justify an ECS, a more complete physics system, or
@@ -179,30 +179,54 @@ using a second game to test whether shared systems are genuinely reusable.
 
 ## 9. Current prototype
 
-The first two milestones are implemented as a navigation and movement demo,
-not a selected arcade game.
+The first playable vertical slice is Maze Chase, an original grid-based game
+with a custom maze and primitive graphics, rather than copied maps or assets.
 
 - `main` owns the Macroquad window, input polling, and application loop.
 - `input` maps keyboard keys to held and newly pressed semantic actions.
 - `state` owns a stack of states and applies their requested transitions.
-- `screens` implements the main menu, demo scene, and pause overlay.
+- `screens` implements the main menu, maze game presentation, pause overlay, and
+  win/loss presentation.
+- `maze` owns the map, movement, pellets, scoring, enemies, and game outcomes,
+  independently of Macroquad.
 - `time` accumulates frame time into fixed 60 Hz simulation updates. Catch-up
   time is limited to 250 ms per frame to avoid unbounded work after a stall.
 
 Only the top state receives input and updates in this prototype. Drawing begins
 at the highest opaque state and includes any transparent states above it.
-Consequently, pausing keeps the demo visible but freezes its simulation.
+Consequently, pausing keeps the maze visible but freezes its simulation.
 Transitions are applied once per rendered frame, before simulation updates, and
 reset accumulated time to avoid carrying old time into a new or resumed screen.
 `Push` adds an overlay, `Pop` removes the top state, `Replace` changes the top
 state, and `Reset` discards the stack and installs a new root. Removing the last
 state exits the application.
 
-The demo draws a keyboard-controlled marker and an automatically orbiting marker
-with a simulation timer, making pause and resume behavior visible. The window is
-currently fixed at 800 by 600 pixels. Rendering remains directly in the prototype
-screens; a shared renderer-facing API is deferred until a game establishes its
-needs.
+The window is fixed at 800 by 600 pixels. Rendering remains directly in the
+prototype screens; a shared renderer-facing API is deferred until its needs
+are established.
+
+### Maze rules
+
+- Collect all pellets to win; each pellet scores 10 points.
+- The player has three lives. Contact with an enemy costs one life. The final
+  collision ends the game; otherwise actors return to their starting positions
+  after a one-second ready interval. Score and collected pellets are preserved.
+- Movement follows one grid direction until blocked or redirected. A requested
+  turn remains buffered until an open junction allows it; the most recent input
+  request replaces the pending turn. Direction presses are captured even in
+  rendered frames without a simulation update, and held directions also work.
+- The player moves one tile every 140 ms. Actor positions are interpolated
+  between tiles for rendering.
+- Two enemies pursue the player's position at the start of a movement step,
+  using breadth-first search along open corridors. They move on alternate
+  player movement steps, providing a speed advantage to the player.
+- Collision checks include shared destinations and actors swapping adjacent
+  tiles. Collision takes priority over pellet collection on the same step.
+- Win and loss freeze gameplay. Restart creates a fresh game; returning to the
+  menu discards the current game.
+
+This slice deliberately omits power-ups, audio, multiple levels, and distinct
+enemy personalities.
 
 ### Running and checking
 
@@ -218,13 +242,16 @@ Controls:
 
 | Screen | Action | Keys |
 |--------|--------|------|
-| Main menu | Start demo | Enter |
+| Main menu | Start game | Enter |
 | Main menu | Quit | Escape |
-| Demo | Move | Arrow keys or WASD |
-| Demo | Pause | Escape or P |
+| Maze | Turn | Arrow keys or WASD |
+| Maze | Pause | Escape or P |
 | Pause overlay | Resume | Escape, P, or Enter |
 | Pause overlay | Return to main menu | M |
+| Win/loss screen | Play again | Enter |
+| Win/loss screen | Return to main menu | M or Escape |
 
 Tests cover transition flow, update blocking under an overlay, drawing
-visibility, fixed-step accumulation, input press semantics, and movement bounds
-and speed.
+visibility, fixed-step accumulation, input press semantics, maze connectivity,
+buffered turns, wall blocking, pellet scoring, enemy navigation, collisions,
+respawn, and game outcomes.
