@@ -15,3 +15,12 @@ impl Rect {
             && self.y + self.height > other.y
     }
 }
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Facing {
+    Left,
+    #[default]
+    Right,
+    Up,
+    Down,
+}

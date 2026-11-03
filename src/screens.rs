@@ -1,6 +1,6 @@
 use crate::input::{Action, Input};
 use crate::controls::Game as GameChoice;
-use crate::assets::Sprite;
+use crate::assets::{Animations, Facing, Sprite};
 use crate::geometry::Rect;
 use crate::invaders::{self, Invaders};
 use crate::maze::{Direction, Maze, Outcome, Tile, HEIGHT, WIDTH};
@@ -11,17 +11,30 @@ use crate::renderer::*;
 impl GameChoice {
     fn start(self) -> Box<dyn State> {
         let result = (|| -> Result<Box<dyn State>, String> {
+            let animations = Animations::load(&crate::assets::directory()?, self)?;
+            #[cfg(not(test))]
+            let animations = {
+                let mut animations = animations;
+                animations.upload();
+                animations
+            };
             match self {
                 Self::Maze => {
                     let path = crate::levels::directory()?.join("maze.json");
                     let level = crate::levels::load_maze(&path)?;
-                    Ok(Box::new(MazeScreen { game: Maze::new(level) }))
+                    Ok(Box::new(MazeScreen { game: Maze::new(level), animations }))
                 }
-                Self::Invaders => Ok(Box::new(InvadersScreen::default())),
+                Self::Invaders => Ok(Box::new(InvadersScreen {
+                    game: Invaders::default(), fire_requested: false,
+                    animations, facing: Facing::Right, moving: false,
+                })),
                 Self::Platform => {
                     let path = crate::levels::directory()?.join("platform.json");
                     let level = crate::levels::load_platform(&path)?;
-                    Ok(Box::new(PlatformScreen { game: PlatformGame::new(level), jump_requested: false }))
+                    Ok(Box::new(PlatformScreen {
+                        game: PlatformGame::new(level), jump_requested: false,
+                        animations, facing: Facing::Right, moving: false,
+                    }))
                 }
             }
         })();
@@ -52,7 +65,7 @@ impl State for LevelErrorScreen {
     }
     fn update(&mut self, _: f32, _: &Input) {}
     fn draw(&self, renderer: &mut dyn Renderer) {
-        renderer.draw_text("Level could not be loaded", 50.0, 150.0, 36.0, RED);
+        renderer.draw_text("Game assets could not be loaded", 50.0, 150.0, 36.0, RED);
         let characters: Vec<_> = self.message.chars().collect();
         for (line, text) in characters.chunks(80).enumerate().take(10) {
             renderer.draw_text(&text.iter().collect::<String>(), 50.0, 205.0 + line as f32 * 24.0, 18.0, YELLOW);
@@ -121,9 +134,16 @@ impl State for MainMenu {
     }
 }
 
-#[cfg_attr(test, derive(Default))]
 struct MazeScreen {
     game: Maze,
+    animations: Animations,
+}
+
+#[cfg(test)]
+impl Default for MazeScreen {
+    fn default() -> Self {
+        Self { game: Maze::default(), animations: Animations::fixture(GameChoice::Maze) }
+    }
 }
 
 impl State for MazeScreen {
@@ -163,6 +183,9 @@ impl State for MazeScreen {
     }
 
     fn update(&mut self, dt: f32, _: &Input) {
+        if self.game.outcome == Outcome::Playing && !self.game.is_respawning() {
+            self.animations.advance(dt);
+        }
         self.game.update(dt);
     }
 
@@ -195,18 +218,21 @@ impl State for MazeScreen {
         }
         let fraction = self.game.animation_fraction();
         let (x, y) = self.game.player.position(fraction);
-        renderer.draw_sprite(Sprite::Orb, Rect {
+        renderer.draw_sprite(Sprite::Orb, self.animations.sample(Sprite::Orb,
+            if self.game.player.is_moving() { "move" } else { "idle" },
+            self.game.player.facing, YELLOW), Rect {
             x: LEFT + (x + 0.5) * CELL - 10.0,
             y: TOP + (y + 0.5) * CELL - 10.0,
             width: 20.0, height: 20.0,
-        }, YELLOW);
+        });
         for (enemy, color) in self.game.enemies.iter().zip([RED, SKYBLUE]) {
             let (x, y) = enemy.position(fraction);
-            renderer.draw_sprite(Sprite::Pursuer, Rect {
+            renderer.draw_sprite(Sprite::Pursuer, self.animations.sample(Sprite::Pursuer,
+                if enemy.is_moving() { "move" } else { "idle" }, enemy.facing, color), Rect {
                 x: LEFT + (x + 0.5) * CELL - 9.0,
                 y: TOP + (y + 0.5) * CELL - 9.0,
                 width: 18.0, height: 18.0,
-            }, color);
+            });
         }
         if self.game.is_respawning() {
             renderer.draw_text("Caught! Get ready...", 270.0, 590.0, 24.0, YELLOW);
@@ -218,10 +244,20 @@ impl State for MazeScreen {
     }
 }
 
-#[derive(Default)]
 struct InvadersScreen {
     game: Invaders,
     fire_requested: bool,
+    animations: Animations,
+    facing: Facing,
+    moving: bool,
+}
+
+#[cfg(test)]
+impl Default for InvadersScreen {
+    fn default() -> Self {
+        Self { game: Invaders::default(), fire_requested: false,
+            animations: Animations::fixture(GameChoice::Invaders), facing: Facing::Right, moving: false }
+    }
 }
 
 impl State for InvadersScreen {
@@ -238,7 +274,7 @@ impl State for InvadersScreen {
                 return Transition::Reset(Box::new(MainMenu { selected: GameChoice::Invaders }));
             }
             if input.pressed(Action::Confirm) {
-                return Transition::Replace(Box::new(Self::default()));
+                return Transition::Replace(GameChoice::Invaders.start());
             }
             return Transition::None;
         }
@@ -250,6 +286,9 @@ impl State for InvadersScreen {
     }
 
     fn update(&mut self, dt: f32, input: &Input) {
+        let active = self.game.outcome == invaders::Outcome::Playing && !self.game.is_respawning();
+        let old_x = self.game.player.x;
+        if active { self.animations.advance(dt); }
         self.game.update(
             dt,
             input.held(Action::MoveLeft),
@@ -257,6 +296,12 @@ impl State for InvadersScreen {
             self.fire_requested || input.held(Action::Fire),
         );
         self.fire_requested = false;
+        if active {
+            self.moving = self.game.player.x != old_x && !self.game.is_respawning();
+            if self.moving {
+                self.facing = if self.game.player.x < old_x { Facing::Left } else { Facing::Right };
+            }
+        }
     }
 
     fn draw(&self, renderer: &mut dyn Renderer) {
@@ -272,10 +317,12 @@ impl State for InvadersScreen {
             height: invaders::BOTTOM - invaders::TOP,
         }, 2.0, DARKGRAY);
         let player = self.game.player;
-        renderer.draw_sprite(Sprite::Ship, player, GREEN);
+        renderer.draw_sprite(Sprite::Ship, self.animations.sample(Sprite::Ship,
+            if self.moving { "move" } else { "idle" }, self.facing, GREEN), player);
         for alien in &self.game.aliens {
             let rect = alien.bounds;
-            renderer.draw_sprite(Sprite::Alien, rect, SKYBLUE);
+            renderer.draw_sprite(Sprite::Alien, self.animations.sample(Sprite::Alien,
+                "idle", Facing::Right, SKYBLUE), rect);
         }
         for (shots, color) in [
             (&self.game.player_shots, YELLOW),
@@ -299,10 +346,20 @@ impl State for InvadersScreen {
     }
 }
 
-#[cfg_attr(test, derive(Default))]
 struct PlatformScreen {
     game: PlatformGame,
     jump_requested: bool,
+    animations: Animations,
+    facing: Facing,
+    moving: bool,
+}
+
+#[cfg(test)]
+impl Default for PlatformScreen {
+    fn default() -> Self {
+        Self { game: PlatformGame::default(), jump_requested: false,
+            animations: Animations::fixture(GameChoice::Platform), facing: Facing::Right, moving: false }
+    }
 }
 
 impl State for PlatformScreen {
@@ -331,6 +388,9 @@ impl State for PlatformScreen {
     }
 
     fn update(&mut self, dt: f32, input: &Input) {
+        let active = self.game.outcome == platform::Outcome::Playing;
+        let old_x = self.game.player.x;
+        if active { self.animations.advance(dt); }
         self.game.update(
             dt,
             input.held(Action::MoveLeft),
@@ -338,6 +398,12 @@ impl State for PlatformScreen {
             self.jump_requested,
         );
         self.jump_requested = false;
+        if active {
+            self.moving = self.game.player.x != old_x;
+            if self.moving {
+                self.facing = if self.game.player.x < old_x { Facing::Left } else { Facing::Right };
+            }
+        }
     }
 
     fn draw(&self, renderer: &mut dyn Renderer) {
@@ -361,15 +427,19 @@ impl State for PlatformScreen {
             renderer.draw_rectangle(surface.x, surface.y, surface.width, 3.0, SKYBLUE);
         }
         for key in &self.game.keys {
-            renderer.draw_sprite(Sprite::Key, *key, GOLD);
+            renderer.draw_sprite(Sprite::Key, self.animations.sample(Sprite::Key,
+                "idle", Facing::Right, GOLD), *key);
         }
         let exit = self.game.level.exit;
         let exit_color = if self.game.exit_open() { GREEN } else { RED };
-        renderer.draw_sprite(Sprite::Exit, exit, exit_color);
+        renderer.draw_sprite(Sprite::Exit, self.animations.sample(Sprite::Exit,
+            "idle", Facing::Right, exit_color), exit);
         renderer.draw_text(if self.game.exit_open() { "OPEN" } else { "LOCKED" },
             exit.x - 12.0, exit.y - 8.0, 16.0, exit_color);
         let player = self.game.player;
-        renderer.draw_sprite(Sprite::Miner, player, YELLOW);
+        let sequence = if !self.game.is_grounded() { "jump" } else if self.moving { "move" } else { "idle" };
+        renderer.draw_sprite(Sprite::Miner, self.animations.sample(Sprite::Miner,
+            sequence, self.facing, YELLOW), player);
         renderer.draw_text("Collect every key, then enter the green exit.", 160.0, 595.0, 22.0, LIGHTGRAY);
         if self.game.outcome != platform::Outcome::Playing {
             draw_result(renderer,
@@ -586,6 +656,114 @@ mod tests {
         screen.handle_input(&Input::for_test(&[], &[Action::MoveRight]));
         screen.update(0.14, &Input::default());
         assert_eq!(screen.game.player.tile, Tile { x: 2, y: 1 });
+    }
+
+    #[test]
+    fn animation_poses_follow_actual_motion_and_keep_facing_when_blocked() {
+        let mut maze = MazeScreen::default();
+        maze.handle_input(&Input::for_test(&[], &[Action::MoveUp]));
+        maze.update(0.14, &Input::default());
+        assert!(!maze.game.player.is_moving());
+        assert_eq!(maze.game.player.facing, Facing::Right);
+        maze.handle_input(&Input::for_test(&[], &[Action::MoveRight]));
+        maze.update(0.14, &Input::default());
+        assert!(maze.game.player.is_moving());
+        let mut renderer = RecordingRenderer::default();
+        maze.draw(&mut renderer);
+        assert_eq!(renderer.frames[0].0, "orb.sprite");
+
+        let mut miner = PlatformScreen::default();
+        let left = Input::for_test(&[Action::MoveLeft], &[]);
+        miner.update(STEP_SECONDS, &left);
+        assert_eq!(miner.facing, Facing::Left);
+        assert!(miner.moving);
+        miner.handle_input(&Input::for_test(&[], &[Action::Jump]));
+        miner.update(STEP_SECONDS, &left);
+        let mut renderer = RecordingRenderer::default();
+        miner.draw(&mut renderer);
+        let index = renderer.sprites.iter().position(|s| s.0 == Sprite::Miner).unwrap();
+        assert_eq!(renderer.frames[index].0, "miner-jump.sprite");
+        assert!(renderer.frames[index].2);
+        miner.update(STEP_SECONDS, &Input::default());
+        assert!(!miner.moving);
+        assert_eq!(miner.facing, Facing::Left);
+
+        let mut shooter = InvadersScreen::default();
+        shooter.game.player.x = invaders::LEFT;
+        shooter.update(STEP_SECONDS, &left);
+        assert!(!shooter.moving);
+        assert_eq!(shooter.facing, Facing::Right);
+        shooter.update(STEP_SECONDS, &Input::for_test(&[Action::MoveRight], &[]));
+        assert!(shooter.moving);
+    }
+
+    #[test]
+    fn all_game_frames_and_palettes_freeze_under_pause_settings_and_controls() {
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        struct Observed(Rc<RefCell<Box<dyn State>>>);
+        impl State for Observed {
+            fn handle_input(&mut self, input: &Input) -> Transition {
+                self.0.borrow_mut().handle_input(input)
+            }
+            fn update(&mut self, dt: f32, input: &Input) {
+                self.0.borrow_mut().update(dt, input);
+            }
+            fn draw(&self, renderer: &mut dyn Renderer) {
+                self.0.borrow().draw(renderer);
+            }
+        }
+        let snapshots = |screen: &Rc<RefCell<Box<dyn State>>>| {
+            let mut renderer = RecordingRenderer::default();
+            screen.borrow().draw(&mut renderer);
+            (renderer.frames, renderer.sprites.iter().map(|s| s.2).collect::<Vec<_>>())
+        };
+        for game in [GameChoice::Maze, GameChoice::Invaders, GameChoice::Platform] {
+            let screen = Rc::new(RefCell::new(game.start()));
+            let mut stack = StateStack::new(Box::new(Observed(Rc::clone(&screen))));
+            stack.update(0.2, &Input::default());
+            let before = snapshots(&screen);
+            assert!(!before.0.is_empty());
+            let press = |a| Input::for_test(&[], &[a]);
+            assert!(stack.handle_input(&press(Action::Pause)));
+            for overlay in [Action::Settings, Action::Controls] {
+                assert!(stack.handle_input(&press(overlay)));
+                for _ in 0..60 { stack.update(STEP_SECONDS, &Input::default()); }
+                assert_eq!(snapshots(&screen), before);
+                assert!(stack.handle_input(&press(Action::Back)));
+            }
+            stack.update(0.25, &Input::default());
+            assert_eq!(snapshots(&screen), before);
+            assert!(stack.handle_input(&press(Action::Confirm)));
+            stack.update(0.2, &Input::default());
+            assert_ne!(snapshots(&screen), before);
+        }
+    }
+
+    #[test]
+    fn results_freeze_animation_clocks_and_restarts_begin_at_frame_zero() {
+        let mut maze = MazeScreen::default();
+        let mut shooter = InvadersScreen::default();
+        let mut miner = PlatformScreen::default();
+        maze.game.outcome = Outcome::Won;
+        shooter.game.outcome = invaders::Outcome::Lost;
+        miner.game.outcome = platform::Outcome::Won;
+        maze.update(1.0, &Input::default());
+        shooter.update(1.0, &Input::default());
+        miner.update(1.0, &Input::default());
+        assert_eq!(maze.animations.elapsed, 0.0);
+        assert_eq!(shooter.animations.elapsed, 0.0);
+        assert_eq!(miner.animations.elapsed, 0.0);
+        for screen in [&mut maze as &mut dyn State, &mut shooter, &mut miner] {
+            let Transition::Replace(fresh) = screen.handle_input(&Input::for_test(&[], &[Action::Confirm])) else {
+                panic!("Expected restart");
+            };
+            let mut renderer = RecordingRenderer::default();
+            fresh.draw(&mut renderer);
+            assert!(renderer.frames.iter().all(|f| !f.0.ends_with("-step.sprite")));
+            assert!(!renderer.frames.is_empty());
+        }
     }
 
     #[test]

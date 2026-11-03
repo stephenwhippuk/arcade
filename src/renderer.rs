@@ -1,4 +1,4 @@
-use crate::assets::{Assets, Sprite};
+use crate::assets::{Sample, Sprite};
 use crate::geometry::Rect;
 use macroquad::prelude as mq;
 
@@ -31,16 +31,14 @@ pub trait Renderer {
     fn draw_rectangle(&mut self, x: f32, y: f32, width: f32, height: f32, color: Color);
     fn draw_rectangle_lines(&mut self, bounds: Rect, thickness: f32, color: Color);
     fn draw_circle(&mut self, x: f32, y: f32, radius: f32, color: Color);
-    fn draw_sprite(&mut self, sprite: Sprite, bounds: Rect, tint: Color);
+    fn draw_sprite(&mut self, sprite: Sprite, sample: Sample<'_>, bounds: Rect);
 }
 
-pub struct MacroquadRenderer {
-    assets: Assets,
-}
+pub struct MacroquadRenderer;
 
 impl MacroquadRenderer {
-    pub fn new(assets: Assets) -> Self {
-        Self { assets }
+    pub fn new() -> Self {
+        Self
     }
 }
 
@@ -65,10 +63,12 @@ impl Renderer for MacroquadRenderer {
         mq::draw_circle(x, y, radius, color(tint));
     }
 
-    fn draw_sprite(&mut self, sprite: Sprite, bounds: Rect, tint: Color) {
-        mq::draw_texture_ex(self.assets.texture(sprite), bounds.x, bounds.y, color(tint),
+    fn draw_sprite(&mut self, _: Sprite, sample: Sample<'_>, bounds: Rect) {
+        mq::draw_texture_ex(sample.frame.texture(), bounds.x, bounds.y, color(sample.tint),
             mq::DrawTextureParams {
                 dest_size: Some(mq::vec2(bounds.width, bounds.height)),
+                rotation: sample.rotation,
+                flip_x: sample.flip_x,
                 ..Default::default()
             });
     }
@@ -79,6 +79,7 @@ impl Renderer for MacroquadRenderer {
 pub struct RecordingRenderer {
     pub sprites: Vec<(Sprite, Rect, Color)>,
     pub texts: Vec<String>,
+    pub frames: Vec<(String, f32, bool)>,
 }
 
 #[cfg(test)]
@@ -89,7 +90,8 @@ impl Renderer for RecordingRenderer {
     fn draw_rectangle(&mut self, _: f32, _: f32, _: f32, _: f32, _: Color) {}
     fn draw_rectangle_lines(&mut self, _: Rect, _: f32, _: Color) {}
     fn draw_circle(&mut self, _: f32, _: f32, _: f32, _: Color) {}
-    fn draw_sprite(&mut self, sprite: Sprite, bounds: Rect, tint: Color) {
-        self.sprites.push((sprite, bounds, tint));
+    fn draw_sprite(&mut self, sprite: Sprite, sample: Sample<'_>, bounds: Rect) {
+        self.sprites.push((sprite, bounds, sample.tint));
+        self.frames.push((sample.frame.name.clone(), sample.rotation, sample.flip_x));
     }
 }

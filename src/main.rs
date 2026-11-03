@@ -37,14 +37,7 @@ async fn main() {
             return;
         }
     };
-    let assets = match assets::Assets::load() {
-        Ok(assets) => assets,
-        Err(error) => {
-            show_startup_error(&error.to_string()).await;
-            return;
-        }
-    };
-    let mut renderer = renderer::MacroquadRenderer::new(assets);
+    let mut renderer = renderer::MacroquadRenderer::new();
     let mut audio = match audio::Audio::load().await {
         Ok(audio) => audio,
         Err(error) => {

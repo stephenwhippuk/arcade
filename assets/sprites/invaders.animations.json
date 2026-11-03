@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "sprites": {
+    "ship": {
+      "sequences": {
+        "idle": { "frames": ["ship.sprite"], "frame_seconds": 0.12 },
+        "move": { "frames": ["ship.sprite", "ship-thrust.sprite"], "frame_seconds": 0.12 }
+      }
+    },
+    "alien": {
+      "sequences": {
+        "idle": { "frames": ["alien.sprite", "alien-step.sprite"], "frame_seconds": 0.25 }
+      }
+    }
+  }
+}

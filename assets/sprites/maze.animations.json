@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "sprites": {
+    "orb": {
+      "sequences": {
+        "idle": { "frames": ["orb.sprite"], "frame_seconds": 0.12 },
+        "move": { "frames": ["orb.sprite", "orb-open.sprite"], "frame_seconds": 0.12 }
+      }
+    },
+    "pursuer": {
+      "sequences": {
+        "idle": {
+          "frames": ["pursuer.sprite", "pursuer-step.sprite"],
+          "frame_seconds": 0.18,
+          "directions": {
+            "up": ["pursuer.sprite", "pursuer-step.sprite"],
+            "down": ["pursuer.sprite", "pursuer-step.sprite"]
+          }
+        },
+        "move": {
+          "frames": ["pursuer.sprite", "pursuer-step.sprite"],
+          "frame_seconds": 0.18,
+          "directions": {
+            "up": ["pursuer.sprite", "pursuer-step.sprite"],
+            "down": ["pursuer.sprite", "pursuer-step.sprite"]
+          }
+        }
+      }
+    }
+  }
+}

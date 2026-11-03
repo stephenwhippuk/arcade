@@ -204,8 +204,8 @@ rather than copied maps or assets. The opening screen selects which game to laun
 - `audio` loads and plays original synthesized effects once at startup and
   applies a shared effects volume and mute setting.
 - `renderer` defines the shared drawing interface and its Macroquad backend.
-- `assets` validates embedded sprite sources and creates reusable GPU textures
-  once at startup.
+- `assets` loads and validates disk-based sprite frames and animation sequences
+  at game start/restart. Each screen owns its animation snapshot and GPU textures.
 - `levels` reads and validates maze and platform JSON files at game start and
   restart. Each running game owns its loaded level data.
 - `time` accumulates frame time into fixed 60 Hz simulation updates. Catch-up
@@ -230,11 +230,11 @@ Game rules remain independent of rendering.
 coordinates), filled rectangles, rectangle outlines, filled circles, and tinted
 sprites. Rectangles and sprites use top-left coordinates and explicit destination
 width/height in the existing 800 by 600 logical space. The interface uses
-engine-owned colors, rectangle bounds, and sprite identifiers, not Macroquad
+engine-owned colors, rectangle bounds, sprite identifiers and frame samples, not Macroquad
 textures or vector types. Draw calls are immediate and ordered, preserving the
 state stack's underlying-screen/overlay layering.
 
-The Macroquad implementation owns one `Assets` collection. Seven original
+Each game screen owns an `Animations` collection. Original
 8-by-8 monochrome masks live in `assets/sprites/`: orb, pursuer, ship, alien,
 miner, key, and exit. Each `.sprite` file contains exactly eight rows of eight
 characters: `#` is an opaque white pixel and `.` is transparent. This minimal
@@ -243,12 +243,62 @@ or another dependency; it is not intended as a general-purpose image format.
 Sprites are tinted with the games' existing colors, including red/green for the
 locked/open exit.
 
-Sources are embedded at compile time, so launching from another directory does
-not break asset lookup. Edit a source and rebuild to change a sprite. At startup,
-all sources are validated before GPU resources are allocated. Errors name the
-asset and appear in the terminal and the startup error screen. Missing source
-files fail compilation. Loaded textures use nearest-neighbor sampling and are
-reused across games, restarts, and overlays, rather than loaded in draw loops.
+Frames and each game's JSON animation manifest are read from disk on launch or
+restart of that game. Editing them does not change an active game's snapshot;
+restart to reload, without rebuilding. All sources are validated before GPU
+resources are allocated. Errors name the asset and appear in the terminal and
+the recoverable game-load error screen: Enter retries, Escape/M returns to
+selection. Loaded textures use nearest-neighbor sampling and are reused during
+play and overlays, never loaded in draw loops.
+
+By default the directory is `assets/sprites/` under the build-time crate path,
+independent of the process's current directory. Distributions must ship these
+files and can override that path:
+
+```sh
+ARCADE_SPRITE_DIR=/absolute/path/to/sprites cargo run
+```
+
+`maze.animations.json`, `invaders.animations.json`, and
+`platform.animations.json` have version `1` and a `sprites` object. Each sprite
+has named `sequences`, with non-empty `frames` filename lists and a
+`frame_seconds` duration per frame:
+
+```json
+{
+  "frames": ["orb.sprite", "orb-open.sprite"],
+  "frame_seconds": 0.12,
+  "directions": { "left": ["orb-open.sprite", "orb.sprite"] }
+}
+```
+
+All sequences loop. Optional `directions` entries (`left`, `right`, `up`, `down`)
+provide complete frame lists for that direction, using the same duration.
+Otherwise the base art faces right and is mirrored for left or rotated for
+up/down. Explicit directional art is drawn without transformation. Pursuers
+override up/down to remain upright. Direction comes from actual movement,
+not a blocked requested turn. Miner sequences are `idle`, `move`, and `jump`;
+the orb, pursuer and ship require `idle` and `move`; aliens, keys and exits
+require `idle`. Jump art is also used when falling; left/right facing persists
+when stationary.
+
+An optional `colors` list contains RGBA values from 0 to 1 and cycles once per
+frame interval, independently of the number of image frames. Cavern keys use
+this to cycle gold, blue, green and red; without a palette the game supplies
+the tint (including the exit's locked/open color).
+
+Each screen advances a shared animation clock only during active fixed-step
+updates. Sequences select frames from that clock, so changing a pose does not
+restart its phase. Drawing never advances time. Pause, audio settings, controls
+and result screens freeze frames and palettes; respawn waits freeze the clock
+too. A game restart resets the clock.
+
+Manifests are limited to 64 KiB, at most 16 sequences per sprite, 32 frames per
+list, 128 unique frames per game, and 32 palette colors. Frame durations must
+be 0.01 to 10 seconds. Frame files are limited to 1 KiB and must be local
+`.sprite` filenames without directory components. Unknown fields, invalid
+directions, missing required sequences, missing files and malformed masks are
+reported rather than substituted silently.
 
 Actor sprites replace the earlier primitive actor drawings; walls, platforms,
 projectiles, pellets, text, and overlays remain primitives. The ship sprite now
@@ -258,8 +308,9 @@ rules, controls, scores, and timers remain unchanged. Transparent areas in the
 art are visual only; collision still uses the existing game-specific geometry.
 
 Headless drawing tests use a recording implementation to inspect sprite
-identifiers, positions, sizes, tints, HUD text, and overlays without a window.
-PNG loading, animation sheets, cameras, resolution scaling, and hot reload are
+identifiers, selected frames, transforms, positions, sizes, tints, HUD text, and
+overlays without a window. CPU loading and timing tests need no GPU context.
+PNG loading, animation sheets, cameras, resolution scaling, and live hot reload are
 deferred until needed.
 
 ### Maze rules
@@ -353,7 +404,7 @@ absolute directory with both JSON files:
 ARCADE_LEVEL_DIR=/absolute/path/to/levels cargo run
 ```
 
-These files must accompany a distributed executable, unlike embedded sprites.
+These files must accompany a distributed executable, as do the sprite assets.
 There is no fallback layout. Read, parse, and validation errors name the file,
 are logged to the terminal, and show a game-specific error screen. Fix the file
 and press Enter to retry, or Escape/M to return to selection. One broken level

@@ -39,6 +39,8 @@ impl Default for PlatformGame {
 }
 
 impl PlatformGame {
+    pub fn is_grounded(&self) -> bool { self.grounded }
+
     pub fn new(level: PlatformLevel) -> Self {
         Self {
             events: Vec::new(),

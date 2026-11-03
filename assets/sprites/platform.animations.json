@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "sprites": {
+    "miner": {
+      "sequences": {
+        "idle": { "frames": ["miner.sprite"], "frame_seconds": 0.14 },
+        "move": { "frames": ["miner.sprite", "miner-step.sprite"], "frame_seconds": 0.14 },
+        "jump": { "frames": ["miner-jump.sprite"], "frame_seconds": 0.14 }
+      }
+    },
+    "key": {
+      "sequences": {
+        "idle": {
+          "frames": ["key.sprite"],
+          "frame_seconds": 0.15,
+          "colors": [[1.0, 0.8, 0.0, 1.0], [0.4, 0.75, 1.0, 1.0], [0.0, 0.89, 0.19, 1.0], [0.9, 0.16, 0.22, 1.0]]
+        }
+      }
+    },
+    "exit": {
+      "sequences": {
+        "idle": { "frames": ["exit.sprite"], "frame_seconds": 0.15 }
+      }
+    }
+  }
+}

@@ -50,14 +50,20 @@ pub enum Outcome {
 pub struct Actor {
     pub tile: Tile,
     previous: Tile,
+    pub facing: crate::geometry::Facing,
 }
 
 impl Actor {
     fn new(tile: Tile) -> Self {
-        Self { tile, previous: tile }
+        Self { tile, previous: tile, facing: crate::geometry::Facing::Right }
     }
 
     fn move_to(&mut self, tile: Tile) {
+        use crate::geometry::Facing;
+        if tile.x < self.tile.x { self.facing = Facing::Left; }
+        else if tile.x > self.tile.x { self.facing = Facing::Right; }
+        else if tile.y < self.tile.y { self.facing = Facing::Up; }
+        else if tile.y > self.tile.y { self.facing = Facing::Down; }
         self.previous = self.tile;
         self.tile = tile;
     }
@@ -69,6 +75,10 @@ impl Actor {
             x + (self.tile.x as f32 - x) * fraction,
             y + (self.tile.y as f32 - y) * fraction,
         )
+    }
+
+    pub fn is_moving(&self) -> bool {
+        self.tile != self.previous
     }
 }
 
