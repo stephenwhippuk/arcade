@@ -1,31 +1,13 @@
+use crate::events::GameEvent;
+use crate::levels::MazeLevel;
 use std::collections::VecDeque;
 
 pub const WIDTH: usize = 19;
 pub const HEIGHT: usize = 15;
 const MOVE_SECONDS: f32 = 0.14;
 const RESPAWN_SECONDS: f32 = 1.0;
-const PLAYER_START: Tile = Tile { x: 1, y: 1 };
-const ENEMY_STARTS: [Tile; 2] = [Tile { x: 17, y: 13 }, Tile { x: 17, y: 1 }];
-
-const MAP: [&str; HEIGHT] = [
-    "###################",
-    "#.....#.....#.....#",
-    "#.###.#.###.#.###.#",
-    "#.#.....#.....#...#",
-    "#.#.###.#.###.#.#.#",
-    "#...#.......#...#.#",
-    "###.#.#####.###.#.#",
-    "#...#...#...#.....#",
-    "#.#####.#.#####.#.#",
-    "#.......#.......#.#",
-    "#.###.#####.###.#.#",
-    "#.#.....#.....#...#",
-    "#.#.###.#.###.###.#",
-    "#.....#.....#.....#",
-    "###################",
-];
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Tile {
     pub x: usize,
     pub y: usize,
@@ -91,6 +73,8 @@ impl Actor {
 }
 
 pub struct Maze {
+    pub level: MazeLevel,
+    pub events: Vec<GameEvent>,
     pellets: [bool; WIDTH * HEIGHT],
     pub player: Actor,
     pub enemies: [Actor; 2],
@@ -105,22 +89,31 @@ pub struct Maze {
     respawn: f32,
 }
 
+#[cfg(test)]
 impl Default for Maze {
     fn default() -> Self {
+        Self::new(crate::levels::maze_fixture())
+    }
+}
+
+impl Maze {
+    pub fn new(level: MazeLevel) -> Self {
         let mut pellets = [false; WIDTH * HEIGHT];
         for y in 0..HEIGHT {
             for x in 0..WIDTH {
                 let tile = Tile { x, y };
-                pellets[tile.index()] = !Self::is_wall(tile)
-                    && tile != PLAYER_START
-                    && !ENEMY_STARTS.contains(&tile);
+                pellets[tile.index()] = level.rows[y].as_bytes()[x] == b'.'
+                    && tile != level.player_start
+                    && !level.enemy_starts.contains(&tile);
             }
         }
         Self {
+            events: Vec::new(),
             remaining: pellets.iter().filter(|&&pellet| pellet).count(),
             pellets,
-            player: Actor::new(PLAYER_START),
-            enemies: ENEMY_STARTS.map(Actor::new),
+            player: Actor::new(level.player_start),
+            enemies: level.enemy_starts.map(Actor::new),
+            level,
             score: 0,
             lives: 3,
             outcome: Outcome::Playing,
@@ -134,12 +127,13 @@ impl Default for Maze {
 }
 
 impl Maze {
-    pub fn is_wall(tile: Tile) -> bool {
-        tile.x >= WIDTH || tile.y >= HEIGHT || MAP[tile.y].as_bytes()[tile.x] == b'#'
+    #[cfg(test)]
+    fn is_wall(tile: Tile) -> bool {
+        crate::levels::maze_fixture().is_wall(tile)
     }
 
     pub fn has_pellet(&self, tile: Tile) -> bool {
-        !Self::is_wall(tile) && self.pellets[tile.index()]
+        !self.level.is_wall(tile) && self.pellets[tile.index()]
     }
 
     pub fn request_direction(&mut self, direction: Direction) {
@@ -177,25 +171,30 @@ impl Maze {
         }
     }
 
+    fn level_destination(level: &MazeLevel, tile: Tile, direction: Direction) -> Option<Tile> {
+        direction.neighbor(tile).filter(|&next| !level.is_wall(next))
+    }
+
+    #[cfg(test)]
     fn destination(tile: Tile, direction: Direction) -> Option<Tile> {
-        direction.neighbor(tile).filter(|&next| !Self::is_wall(next))
+        Self::level_destination(&crate::levels::maze_fixture(), tile, direction)
     }
 
     fn step(&mut self) {
         if let Some(requested) = self.requested {
-            if Self::destination(self.player.tile, requested).is_some() {
+            if Self::level_destination(&self.level, self.player.tile, requested).is_some() {
                 self.direction = Some(requested);
                 self.requested = None;
             }
         }
         let next = self.direction
-            .and_then(|direction| Self::destination(self.player.tile, direction))
+            .and_then(|direction| Self::level_destination(&self.level, self.player.tile, direction))
             .unwrap_or(self.player.tile);
         self.player.move_to(next);
         self.enemy_turn = !self.enemy_turn;
         for enemy in &mut self.enemies {
             let next = if self.enemy_turn {
-                Self::chase_step(enemy.tile, self.player.previous)
+                Self::level_chase_step(&self.level, enemy.tile, self.player.previous)
             } else {
                 enemy.tile
             };
@@ -210,11 +209,13 @@ impl Maze {
         });
         if hit {
             self.lives -= 1;
+            self.events.push(GameEvent::Hit);
             if self.lives == 0 {
                 self.outcome = Outcome::Lost;
+                self.events.push(GameEvent::Lose);
             } else {
-                self.player = Actor::new(PLAYER_START);
-                self.enemies = ENEMY_STARTS.map(Actor::new);
+                self.player = Actor::new(self.level.player_start);
+                self.enemies = self.level.enemy_starts.map(Actor::new);
                 self.direction = None;
                 self.requested = None;
                 self.enemy_turn = false;
@@ -225,14 +226,21 @@ impl Maze {
         if self.pellets[self.player.tile.index()] {
             self.pellets[self.player.tile.index()] = false;
             self.score += 10;
+            self.events.push(GameEvent::Collect);
             self.remaining -= 1;
             if self.remaining == 0 {
                 self.outcome = Outcome::Won;
+                self.events.push(GameEvent::Win);
             }
         }
     }
 
+    #[cfg(test)]
     fn chase_step(start: Tile, target: Tile) -> Tile {
+        Self::level_chase_step(&crate::levels::maze_fixture(), start, target)
+    }
+
+    fn level_chase_step(level: &MazeLevel, start: Tile, target: Tile) -> Tile {
         let mut visited = [false; WIDTH * HEIGHT];
         let mut queue = VecDeque::from([(start, start)]);
         visited[start.index()] = true;
@@ -241,7 +249,7 @@ impl Maze {
                 return first_step;
             }
             for direction in [Direction::Up, Direction::Left, Direction::Down, Direction::Right] {
-                if let Some(next) = Self::destination(tile, direction) {
+                if let Some(next) = Self::level_destination(level, tile, direction) {
                     if !visited[next.index()] {
                         visited[next.index()] = true;
                         queue.push_back((next, if tile == start { next } else { first_step }));
@@ -256,6 +264,8 @@ impl Maze {
 #[cfg(test)]
 mod tests {
     use super::*;
+    const PLAYER_START: Tile = Tile { x: 1, y: 1 };
+    const ENEMY_STARTS: [Tile; 2] = [Tile { x: 17, y: 13 }, Tile { x: 17, y: 1 }];
 
     fn safe_game() -> Maze {
         Maze { enemy_turn: true, ..Maze::default() }
@@ -263,7 +273,7 @@ mod tests {
 
     #[test]
     fn map_is_enclosed_and_every_pellet_and_spawn_is_reachable() {
-        assert!(MAP.iter().all(|row| row.len() == WIDTH));
+        assert!(crate::levels::maze_fixture().rows.iter().all(|row| row.len() == WIDTH));
         for x in 0..WIDTH {
             assert!(Maze::is_wall(Tile { x, y: 0 }));
             assert!(Maze::is_wall(Tile { x, y: HEIGHT - 1 }));
@@ -382,8 +392,10 @@ mod tests {
         game.request_direction(Direction::Right);
         game.update(MOVE_SECONDS);
         assert_eq!(game.outcome, Outcome::Won);
+        assert_eq!(game.events, vec![GameEvent::Collect, GameEvent::Win]);
         assert_eq!(game.score, 10);
         game.update(10.0);
+        assert_eq!(game.events, vec![GameEvent::Collect, GameEvent::Win]);
         assert_eq!(game.player.tile, Tile { x: 2, y: 1 });
     }
 
